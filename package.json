@@ -1,0 +1,19 @@
+{
+  "name": "gsi-to-dxf",
+  "version": "1.0.0",
+  "description": "国土地理院地図ベクトルタイルをDXF形式で出力するツール",
+  "type": "module",
+  "main": "main.js",
+  "scripts": {
+    "start": "node server.js",
+    "cli": "node main.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@mapbox/vector-tile": "^2.0.3",
+    "pbf": "^4.0.1",
+    "proj4": "^2.12.1"
+  }
+}

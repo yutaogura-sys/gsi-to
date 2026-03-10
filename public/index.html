@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GSI Map → DXF Converter</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Segoe UI', 'Meiryo', sans-serif;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  #map {
+    width: 100%;
+    height: 100%;
+    z-index: 1;
+  }
+
+  /* ─── 左パネル ─── */
+  #panel {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    z-index: 1000;
+    width: 340px;
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.15);
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100vh - 24px);
+    overflow-y: auto;
+  }
+
+  .panel-header {
+    padding: 16px 20px 12px;
+    border-bottom: 1px solid #e8e8e8;
+  }
+
+  .panel-header h1 {
+    font-size: 16px;
+    font-weight: 700;
+    color: #1a1a1a;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .panel-header p {
+    font-size: 11px;
+    color: #888;
+    margin-top: 4px;
+  }
+
+  .panel-body {
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  /* ─── 検索バー ─── */
+  .search-group {
+    display: flex;
+    gap: 6px;
+  }
+
+  .search-group input {
+    flex: 1;
+    padding: 10px 12px;
+    border: 1.5px solid #ddd;
+    border-radius: 8px;
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .search-group input:focus {
+    border-color: #4285f4;
+  }
+
+  .search-group button {
+    padding: 10px 14px;
+    background: #4285f4;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s;
+  }
+
+  .search-group button:hover { background: #3367d6; }
+
+  .search-hint {
+    font-size: 11px;
+    color: #999;
+    margin-top: -8px;
+  }
+
+  /* ─── 設定セクション ─── */
+  .section-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: -4px;
+  }
+
+  .param-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .param-row label {
+    font-size: 13px;
+    color: #444;
+    min-width: 48px;
+  }
+
+  .param-row input[type="range"] {
+    flex: 1;
+    accent-color: #4285f4;
+  }
+
+  .param-row .value-badge {
+    background: #f0f0f0;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #333;
+    min-width: 56px;
+    text-align: center;
+  }
+
+  select {
+    padding: 8px 10px;
+    border: 1.5px solid #ddd;
+    border-radius: 8px;
+    font-size: 13px;
+    outline: none;
+    background: #fff;
+    flex: 1;
+  }
+
+  /* ─── 座標表示 ─── */
+  .coord-display {
+    background: #f8f9fa;
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    color: #555;
+    line-height: 1.6;
+  }
+
+  .coord-display strong {
+    color: #222;
+  }
+
+  .coord-display.empty {
+    color: #aaa;
+    text-align: center;
+    font-style: italic;
+  }
+
+  /* ─── 生成ボタン ─── */
+  #btn-generate {
+    width: 100%;
+    padding: 12px;
+    background: #1a73e8;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, opacity 0.15s;
+  }
+
+  #btn-generate:hover:not(:disabled) { background: #1557b0; }
+  #btn-generate:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* ─── プログレス ─── */
+  #progress-area {
+    display: none;
+  }
+
+  #progress-area.active {
+    display: block;
+  }
+
+  .progress-bar-bg {
+    width: 100%;
+    height: 6px;
+    background: #e8e8e8;
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #4285f4, #34a853);
+    border-radius: 3px;
+    transition: width 0.3s ease;
+    width: 0%;
+  }
+
+  .progress-message {
+    font-size: 12px;
+    color: #666;
+    margin-top: 6px;
+  }
+
+  /* ─── 結果 ─── */
+  #result-area {
+    display: none;
+  }
+
+  #result-area.active {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .result-stats {
+    background: #e8f5e9;
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    color: #2e7d32;
+    line-height: 1.6;
+  }
+
+  #btn-download {
+    width: 100%;
+    padding: 12px;
+    background: #34a853;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+    text-decoration: none;
+    text-align: center;
+    display: block;
+  }
+
+  #btn-download:hover { background: #2e7d32; }
+
+  /* ─── エラー ─── */
+  .error-msg {
+    background: #fce4ec;
+    color: #c62828;
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    display: none;
+  }
+
+  .error-msg.active { display: block; }
+
+  /* ─── レスポンシブ ─── */
+  @media (max-width: 600px) {
+    #panel {
+      width: calc(100% - 24px);
+      max-height: 50vh;
+    }
+  }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div id="panel">
+  <div class="panel-header">
+    <h1>GSI Map → DXF</h1>
+    <p>地図をクリック or 住所検索 → DXF ファイルを生成</p>
+  </div>
+
+  <div class="panel-body">
+    <!-- 住所検索 -->
+    <div class="search-group">
+      <input type="text" id="address-input" placeholder="住所 or GoogleマップURL を入力..."
+             spellcheck="false" autocomplete="off">
+      <button id="btn-search">検索</button>
+    </div>
+    <p class="search-hint">地図クリック / 住所検索 / GoogleマップURL貼り付け に対応</p>
+
+    <!-- 座標表示 -->
+    <div class="coord-display empty" id="coord-display">
+      地点が選択されていません
+    </div>
+
+    <!-- 設定 -->
+    <div class="section-title">設定</div>
+
+    <div class="param-row">
+      <label>半径</label>
+      <input type="range" id="radius-slider" min="100" max="2000" step="50" value="500">
+      <span class="value-badge" id="radius-value">500m</span>
+    </div>
+
+    <div class="param-row">
+      <label>詳細度</label>
+      <select id="zoom-select">
+        <option value="14">低 (ズーム14 / 広域)</option>
+        <option value="15">中 (ズーム15)</option>
+        <option value="16" selected>高 (ズーム16 / 推奨)</option>
+      </select>
+    </div>
+
+    <div class="param-row">
+      <label>出力</label>
+      <select id="mode-select">
+        <option value="simple" selected>シンプル (建物・道路・構造物 / 白黒)</option>
+        <option value="full">フル (全レイヤー / カラー)</option>
+      </select>
+    </div>
+
+    <!-- 生成ボタン -->
+    <button id="btn-generate" disabled>DXF を生成</button>
+
+    <!-- プログレス -->
+    <div id="progress-area">
+      <div class="progress-bar-bg">
+        <div class="progress-bar-fill" id="progress-fill"></div>
+      </div>
+      <div class="progress-message" id="progress-msg">準備中...</div>
+    </div>
+
+    <!-- エラー -->
+    <div class="error-msg" id="error-msg"></div>
+
+    <!-- 結果 -->
+    <div id="result-area">
+      <div class="result-stats" id="result-stats"></div>
+      <a id="btn-download" href="#" download>DXF をダウンロード</a>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── 地図初期化 ───
+const map = L.map('map', {
+  zoomControl: true,
+}).setView([36.1, 140.08], 5);
+
+// GSI 標準地図タイル
+const stdLayer = L.tileLayer(
+  'https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png',
+  { maxZoom: 18, attribution: '<a href="https://maps.gsi.go.jp/" target="_blank">国土地理院</a>' }
+);
+
+// GSI 航空写真タイル
+const photoLayer = L.tileLayer(
+  'https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg',
+  { maxZoom: 18, attribution: '<a href="https://maps.gsi.go.jp/" target="_blank">国土地理院</a>' }
+);
+
+// GSI 淡色地図
+const paleLayer = L.tileLayer(
+  'https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png',
+  { maxZoom: 18, attribution: '<a href="https://maps.gsi.go.jp/" target="_blank">国土地理院</a>' }
+);
+
+stdLayer.addTo(map);
+
+L.control.layers({
+  '標準地図': stdLayer,
+  '淡色地図': paleLayer,
+  '航空写真': photoLayer,
+}, null, { position: 'topright' }).addTo(map);
+
+// ─── 状態管理 ───
+let selectedLat = null;
+let selectedLon = null;
+let selectedName = '';
+let marker = null;
+let circle = null;
+
+// DOM
+const addressInput = document.getElementById('address-input');
+const btnSearch = document.getElementById('btn-search');
+const btnGenerate = document.getElementById('btn-generate');
+const radiusSlider = document.getElementById('radius-slider');
+const radiusValue = document.getElementById('radius-value');
+const zoomSelect = document.getElementById('zoom-select');
+const modeSelect = document.getElementById('mode-select');
+const coordDisplay = document.getElementById('coord-display');
+const progressArea = document.getElementById('progress-area');
+const progressFill = document.getElementById('progress-fill');
+const progressMsg = document.getElementById('progress-msg');
+const errorMsg = document.getElementById('error-msg');
+const resultArea = document.getElementById('result-area');
+const resultStats = document.getElementById('result-stats');
+const btnDownload = document.getElementById('btn-download');
+
+// ─── 地点選択 ───
+function setLocation(lat, lon, name = '') {
+  selectedLat = lat;
+  selectedLon = lon;
+  selectedName = name;
+
+  const r = parseInt(radiusSlider.value, 10);
+
+  if (marker) {
+    marker.setLatLng([lat, lon]);
+    circle.setLatLng([lat, lon]);
+    circle.setRadius(r);
+  } else {
+    marker = L.marker([lat, lon], { draggable: true }).addTo(map);
+    circle = L.circle([lat, lon], {
+      radius: r,
+      color: '#1a73e8',
+      fillColor: '#1a73e8',
+      fillOpacity: 0.08,
+      weight: 2,
+    }).addTo(map);
+
+    marker.on('drag', (e) => {
+      const ll = e.target.getLatLng();
+      selectedLat = ll.lat;
+      selectedLon = ll.lng;
+      circle.setLatLng(ll);
+      updateCoordDisplay();
+    });
+  }
+
+  updateCoordDisplay();
+  btnGenerate.disabled = false;
+
+  // ズームして表示
+  map.fitBounds(circle.getBounds(), { padding: [60, 60] });
+}
+
+function updateCoordDisplay() {
+  coordDisplay.classList.remove('empty');
+  let html = `<strong>${selectedName || '地図上の地点'}</strong><br>`;
+  html += `緯度: ${selectedLat.toFixed(6)}　経度: ${selectedLon.toFixed(6)}`;
+  coordDisplay.innerHTML = html;
+}
+
+// ─── 地図クリック ───
+map.on('click', (e) => {
+  setLocation(e.latlng.lat, e.latlng.lng);
+});
+
+// ─── GoogleマップURL解析 ───
+function parseGoogleMapsUrl(text) {
+  // パターン1: @LAT,LON,ZOOMz (通常のURL)
+  // 例: https://www.google.com/maps/@35.681236,139.767125,15z
+  // 例: https://www.google.com/maps/place/東京駅/@35.681236,139.767125,15z/...
+  const atPattern = /@(-?\d+\.?\d*),(-?\d+\.?\d*),(\d+\.?\d*)z/;
+  const atMatch = text.match(atPattern);
+  if (atMatch) {
+    return { lat: parseFloat(atMatch[1]), lon: parseFloat(atMatch[2]) };
+  }
+
+  // パターン2: !3dLAT!4dLON (短縮URL展開後など)
+  const bangPattern = /!3d(-?\d+\.?\d*)!4d(-?\d+\.?\d*)/;
+  const bangMatch = text.match(bangPattern);
+  if (bangMatch) {
+    return { lat: parseFloat(bangMatch[1]), lon: parseFloat(bangMatch[2]) };
+  }
+
+  // パターン3: q=LAT,LON
+  const qPattern = /[?&]q=(-?\d+\.?\d*),(-?\d+\.?\d*)/;
+  const qMatch = text.match(qPattern);
+  if (qMatch) {
+    return { lat: parseFloat(qMatch[1]), lon: parseFloat(qMatch[2]) };
+  }
+
+  // パターン4: ll=LAT,LON
+  const llPattern = /[?&]ll=(-?\d+\.?\d*),(-?\d+\.?\d*)/;
+  const llMatch = text.match(llPattern);
+  if (llMatch) {
+    return { lat: parseFloat(llMatch[1]), lon: parseFloat(llMatch[2]) };
+  }
+
+  return null;
+}
+
+function isGoogleMapsUrl(text) {
+  return /google\.(com|co\.jp)\/maps/.test(text) ||
+         /maps\.google\.(com|co\.jp)/.test(text) ||
+         /goo\.gl\/maps/.test(text) ||
+         /maps\.app\.goo\.gl/.test(text);
+}
+
+// ─── 住所検索 ───
+async function searchAddress() {
+  const q = addressInput.value.trim();
+  if (!q) return;
+
+  // GoogleマップURL判定
+  if (isGoogleMapsUrl(q)) {
+    const coords = parseGoogleMapsUrl(q);
+    if (coords && isFinite(coords.lat) && isFinite(coords.lon)) {
+      setLocation(coords.lat, coords.lon, `Google Maps (${coords.lat.toFixed(4)}, ${coords.lon.toFixed(4)})`);
+      return;
+    } else {
+      showError('GoogleマップURLから座標を取得できませんでした。地図上の地点を含むURLを貼り付けてください。');
+      return;
+    }
+  }
+
+  btnSearch.textContent = '検索中...';
+  btnSearch.disabled = true;
+  hideError();
+
+  try {
+    const res = await fetch(`/api/geocode?q=${encodeURIComponent(q)}`);
+    const data = await res.json();
+
+    if (data.error) throw new Error(data.error);
+
+    setLocation(data.lat, data.lon, data.name);
+    addressInput.value = data.name;
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    btnSearch.textContent = '検索';
+    btnSearch.disabled = false;
+  }
+}
+
+btnSearch.addEventListener('click', searchAddress);
+addressInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') searchAddress();
+});
+
+// GoogleマップURL貼り付け時に自動検出
+addressInput.addEventListener('paste', (e) => {
+  setTimeout(() => {
+    const text = addressInput.value.trim();
+    if (isGoogleMapsUrl(text)) {
+      searchAddress();
+    }
+  }, 50);
+});
+
+// ─── 半径スライダー ───
+radiusSlider.addEventListener('input', () => {
+  const v = parseInt(radiusSlider.value, 10);
+  radiusValue.textContent = v + 'm';
+  if (circle) {
+    circle.setRadius(v);
+    map.fitBounds(circle.getBounds(), { padding: [60, 60] });
+  }
+});
+
+// ─── DXF 生成 ───
+btnGenerate.addEventListener('click', () => {
+  if (selectedLat == null) return;
+
+  const radius = parseInt(radiusSlider.value, 10);
+  const zoom = parseInt(zoomSelect.value, 10);
+
+  // UI 状態リセット
+  btnGenerate.disabled = true;
+  hideError();
+  resultArea.classList.remove('active');
+  progressArea.classList.add('active');
+  progressFill.style.width = '0%';
+  progressMsg.textContent = '準備中...';
+
+  const mode = modeSelect.value;
+  const params = new URLSearchParams({
+    lat: selectedLat,
+    lon: selectedLon,
+    radius,
+    zoom,
+    name: selectedName,
+    mode,
+  });
+
+  const evtSource = new EventSource(`/api/generate?${params}`);
+
+  evtSource.addEventListener('progress', (e) => {
+    const data = JSON.parse(e.data);
+    progressFill.style.width = data.percent + '%';
+    progressMsg.textContent = data.message;
+  });
+
+  evtSource.addEventListener('complete', (e) => {
+    evtSource.close();
+    const data = JSON.parse(e.data);
+
+    progressArea.classList.remove('active');
+
+    // 結果表示
+    const layers = Object.entries(data.stats)
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, count]) => `${name}: ${count}`)
+      .join('、');
+
+    resultStats.innerHTML =
+      `<strong>${data.featureCount} 地物</strong> (${data.fileSize})<br>` +
+      `<span style="font-size:11px">${layers}</span><br>` +
+      `<span style="font-size:11px;color:#555">座標系: ${data.projection}</span>`;
+
+    btnDownload.href = data.downloadUrl;
+    btnDownload.download = (selectedName || 'output') + '.dxf';
+    resultArea.classList.add('active');
+    btnGenerate.disabled = false;
+  });
+
+  evtSource.addEventListener('error', (e) => {
+    evtSource.close();
+    try {
+      const data = JSON.parse(e.data);
+      showError(data.message);
+    } catch {
+      showError('通信エラーが発生しました');
+    }
+    progressArea.classList.remove('active');
+    btnGenerate.disabled = false;
+  });
+});
+
+// ─── エラー表示 ───
+function showError(msg) {
+  errorMsg.textContent = msg;
+  errorMsg.classList.add('active');
+}
+
+function hideError() {
+  errorMsg.classList.remove('active');
+}
+</script>
+</body>
+</html>
