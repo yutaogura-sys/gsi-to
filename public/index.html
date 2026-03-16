@@ -329,6 +329,14 @@
       </select>
     </div>
 
+    <!-- ファイル名 -->
+    <div class="param-row">
+      <label>ファイル名</label>
+      <input type="text" id="filename-input" placeholder="例: 現場A"
+             style="flex:1; padding:8px 10px; border:1.5px solid #ddd; border-radius:8px; font-size:13px; outline:none;">
+      <span style="font-size:13px; color:#888;">.dxf</span>
+    </div>
+
     <!-- 生成ボタン -->
     <button id="btn-generate" disabled>DXF を生成</button>
 
@@ -406,6 +414,7 @@ const errorMsg = document.getElementById('error-msg');
 const resultArea = document.getElementById('result-area');
 const resultStats = document.getElementById('result-stats');
 const btnDownload = document.getElementById('btn-download');
+const filenameInput = document.getElementById('filename-input');
 
 // ─── 地点選択 ───
 function setLocation(lat, lon, name = '') {
@@ -612,7 +621,8 @@ btnGenerate.addEventListener('click', () => {
       `<span style="font-size:11px;color:#555">座標系: ${data.projection}</span>`;
 
     btnDownload.href = data.downloadUrl;
-    btnDownload.download = (selectedName || 'output') + '.dxf';
+    const customName = filenameInput.value.trim();
+    btnDownload.download = (customName || selectedName || 'output') + '.dxf';
     resultArea.classList.add('active');
     btnGenerate.disabled = false;
   });
