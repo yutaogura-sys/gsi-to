@@ -238,38 +238,46 @@ async function main() {
   console.log('DXF ファイルを生成中...');
   const dxf = new DxfWriter();
 
+  // 指定座標の変換結果をオフセット基準にする（原点付近に移動）
+  const [originX, originY] = converter.convert(lon, lat);
+  const convertWithOffset = (lonVal, latVal) => {
+    const [x, y] = converter.convert(lonVal, latVal);
+    return [x - originX, y - originY];
+  };
+
   // レイヤー集計
   const layerStats = {};
+  let addedCount = 0;
 
   for (const feat of features) {
-    const config = getLayerConfig(feat.layerName);
+    const config = getLayerConfig(feat.layerName, 'full');
+    if (!config) continue;
     const dxfLayerName = config.dxf;
 
     // レイヤーを登録
     dxf.addLayer(dxfLayerName, config.color);
 
-    // ジオメトリを DXF に追加
-    addGeometryToDxf(dxf, dxfLayerName, feat.geojson.geometry, converter);
+    // ジオメトリを DXF に追加 (オフセット付き)
+    addGeometryToDxf(dxf, dxfLayerName, feat.geojson.geometry, { convert: convertWithOffset });
+    addedCount++;
 
     // ラベル (注記) の場合はテキストも追加
     if (feat.layerName === 'label' && feat.properties.knj) {
       const coords = feat.geojson.geometry.coordinates;
-      if (coords && coords.length >= 2) {
-        const [tx, ty] = converter.convert(coords[0], coords[1]);
-        const textLayer = '注記テキスト';
-        dxf.addLayer(textLayer, 7); // 白
-        dxf.addMText(textLayer, tx, ty, 3.0, feat.properties.knj);
+      if (coords?.length >= 2) {
+        const [tx, ty] = convertWithOffset(coords[0], coords[1]);
+        dxf.addLayer('LABEL_TEXT', 7);
+        dxf.addMText('LABEL_TEXT', tx, ty, 3.0, feat.properties.knj);
       }
     }
 
     // 標高点の場合は標高値をテキスト表示
     if (feat.layerName === 'elevation' && feat.properties.alti != null) {
       const coords = feat.geojson.geometry.coordinates;
-      if (coords && coords.length >= 2) {
-        const [tx, ty] = converter.convert(coords[0], coords[1]);
-        const elevLayer = '標高値';
-        dxf.addLayer(elevLayer, 3); // 緑
-        dxf.addMText(elevLayer, tx + 2, ty, 2.0, String(feat.properties.alti));
+      if (coords?.length >= 2) {
+        const [tx, ty] = convertWithOffset(coords[0], coords[1]);
+        dxf.addLayer('ELEV_TEXT', 3);
+        dxf.addMText('ELEV_TEXT', tx + 2, ty, 2.0, String(feat.properties.alti));
       }
     }
 
@@ -277,11 +285,10 @@ async function main() {
     if (feat.layerName === 'contour' && feat.properties.alti != null) {
       const coords = feat.geojson.geometry.coordinates;
       const firstCoord = Array.isArray(coords[0]?.[0]) ? coords[0][0] : coords[0];
-      if (firstCoord && firstCoord.length >= 2) {
-        const [tx, ty] = converter.convert(firstCoord[0], firstCoord[1]);
-        const contourLabelLayer = '等高線ラベル';
-        dxf.addLayer(contourLabelLayer, 24); // 茶
-        dxf.addMText(contourLabelLayer, tx, ty, 1.5, String(feat.properties.alti));
+      if (firstCoord?.length >= 2) {
+        const [tx, ty] = convertWithOffset(firstCoord[0], firstCoord[1]);
+        dxf.addLayer('CONTOUR_TEXT', 24);
+        dxf.addMText('CONTOUR_TEXT', tx, ty, 1.5, String(feat.properties.alti));
       }
     }
 
@@ -289,28 +296,21 @@ async function main() {
     layerStats[dxfLayerName] = (layerStats[dxfLayerName] || 0) + 1;
   }
 
-  // メタ情報テキストを追加
-  const infoLayerName = '_情報';
-  dxf.addLayer(infoLayerName, 8); // グレー
-  const centerXY = converter.convert(lon, lat);
-  dxf.addMText(
-    infoLayerName,
-    centerXY[0], centerXY[1] - 15,
-    2.0,
-    `場所: ${locationName}\\P` +
-    `座標系: ${converter.describe()}\\P` +
-    `縮尺: 1/1 (1DXF単位=1m)\\P` +
-    `出典: 国土地理院ベクトルタイル`
-  );
+  if (addedCount === 0) {
+    console.error('\nエラー: この範囲に対象の地物データがありません');
+    process.exit(1);
+  }
 
-  // 中心点にクロスマーカー
-  const crossSize = 10;
-  const cx = centerXY[0];
-  const cy = centerXY[1];
-  const crossLayer = '_中心点';
-  dxf.addLayer(crossLayer, 1); // 赤
-  dxf.addLine(crossLayer, cx - crossSize, cy, cx + crossSize, cy);
-  dxf.addLine(crossLayer, cx, cy - crossSize, cx, cy + crossSize);
+  // 中心点にクロスマーカー (原点 = 指定座標)
+  dxf.addLayer('CENTER', 1);
+  dxf.addLine('CENTER', -10, 0, 10, 0);
+  dxf.addLine('CENTER', 0, -10, 0, 10);
+
+  // メタ情報テキストを追加
+  dxf.addLayer('INFO', 8);
+  dxf.addMText('INFO', 0, -15, 2.0,
+    `Location: ${locationName}\\P${converter.describe()}\\P1unit=1m\\PGSI Vector Tile`
+  );
 
   // ファイル書き出し
   const outputFile = args.output || 'output.dxf';
@@ -326,7 +326,7 @@ async function main() {
   for (const [name, count] of sortedLayers) {
     console.log(`  ${name.padEnd(16)} ${count}`);
   }
-  console.log(`  ${'合計'.padEnd(16)} ${features.length}`);
+  console.log(`  ${'合計'.padEnd(16)} ${addedCount}`);
   console.log(`\n縮尺: 1/1 (1 DXF 単位 = 1 メートル)`);
   console.log(`座標系: ${converter.describe()}`);
 }

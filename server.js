@@ -8,7 +8,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
 
 import { geocode } from './geocoder.js';
 import { fetchAllFeatures } from './tile-fetcher.js';
@@ -232,9 +232,21 @@ const server = http.createServer(async (req, res) => {
     const name = url.searchParams.get('name') || '';
     const mode = url.searchParams.get('mode') === 'full' ? 'full' : 'simple';
 
-    if (isNaN(lat) || isNaN(lon)) {
+    if (isNaN(lat) || isNaN(lon) || lat < 20 || lat > 46 || lon < 122 || lon > 154) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: '緯度・経度が無効です' }));
+      res.end(JSON.stringify({ error: '緯度・経度が無効です (日本国内の座標を指定してください)' }));
+      return;
+    }
+
+    if (radius < 100 || radius > 2000) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '半径は 100〜2000m の範囲で指定してください' }));
+      return;
+    }
+
+    if (zoom < 14 || zoom > 16) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'ズームレベルは 14〜16 の範囲で指定してください' }));
       return;
     }
 
@@ -245,14 +257,25 @@ const server = http.createServer(async (req, res) => {
       'Connection': 'keep-alive',
     });
 
+    // クライアント切断検知
+    let clientDisconnected = false;
+    res.on('close', () => { clientDisconnected = true; });
+
     const sendEvent = (event, data) => {
-      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      if (clientDisconnected || res.writableEnded) return;
+      try {
+        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      } catch {
+        clientDisconnected = true;
+      }
     };
 
     try {
       const result = await generateDxf(lat, lon, radius, zoom, name, mode, (msg, pct) => {
         sendEvent('progress', { message: msg, percent: pct });
       });
+
+      if (clientDisconnected) { return; }
 
       // DXF を一時ストレージに保存
       const id = crypto.randomUUID();
@@ -272,7 +295,7 @@ const server = http.createServer(async (req, res) => {
       sendEvent('error', { message: err.message });
     }
 
-    res.end();
+    if (!res.writableEnded) res.end();
     return;
   }
 
@@ -309,8 +332,11 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`\n  URL: ${url}`);
   console.log(`  終了: Ctrl+C\n`);
 
-  // ブラウザを自動で開く
-  const cmd = process.platform === 'win32' ? 'start' :
-              process.platform === 'darwin' ? 'open' : 'xdg-open';
-  exec(`${cmd} ${url}`);
+  // ブラウザを自動で開く (execFile でコマンドインジェクション防止)
+  if (process.platform === 'win32') {
+    execFile('cmd', ['/c', 'start', '', url], () => {});
+  } else {
+    const cmd = process.platform === 'darwin' ? 'open' : 'xdg-open';
+    execFile(cmd, [url], () => {});
+  }
 });

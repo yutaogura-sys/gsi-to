@@ -13,7 +13,7 @@ const GSI_GEOCODE_URL = 'https://msearch.gsi.go.jp/address-search/AddressSearch'
 export async function geocode(address) {
   const url = `${GSI_GEOCODE_URL}?q=${encodeURIComponent(address)}`;
 
-  const response = await fetch(url);
+  const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
   if (!response.ok) {
     throw new Error(`ジオコーディングAPI エラー: HTTP ${response.status}`);
   }

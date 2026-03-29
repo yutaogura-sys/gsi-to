@@ -454,9 +454,13 @@ function setLocation(lat, lon, name = '') {
   map.fitBounds(circle.getBounds(), { padding: [60, 60] });
 }
 
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 function updateCoordDisplay() {
   coordDisplay.classList.remove('empty');
-  let html = `<strong>${selectedName || '地図上の地点'}</strong><br>`;
+  let html = `<strong>${escapeHtml(selectedName || '地図上の地点')}</strong><br>`;
   html += `緯度: ${selectedLat.toFixed(6)}　経度: ${selectedLon.toFixed(6)}`;
   coordDisplay.innerHTML = html;
 }
@@ -571,6 +575,8 @@ radiusSlider.addEventListener('input', () => {
 });
 
 // ─── DXF 生成 ───
+let activeEvtSource = null;
+
 btnGenerate.addEventListener('click', () => {
   if (selectedLat == null) return;
 
@@ -595,7 +601,14 @@ btnGenerate.addEventListener('click', () => {
     mode,
   });
 
+  // 前回の接続があれば閉じる
+  if (activeEvtSource) {
+    activeEvtSource.close();
+    activeEvtSource = null;
+  }
+
   const evtSource = new EventSource(`/api/generate?${params}`);
+  activeEvtSource = evtSource;
 
   evtSource.addEventListener('progress', (e) => {
     const data = JSON.parse(e.data);
@@ -605,6 +618,7 @@ btnGenerate.addEventListener('click', () => {
 
   evtSource.addEventListener('complete', (e) => {
     evtSource.close();
+    activeEvtSource = null;
     const data = JSON.parse(e.data);
 
     progressArea.classList.remove('active');
@@ -616,9 +630,9 @@ btnGenerate.addEventListener('click', () => {
       .join('、');
 
     resultStats.innerHTML =
-      `<strong>${data.featureCount} 地物</strong> (${data.fileSize})<br>` +
-      `<span style="font-size:11px">${layers}</span><br>` +
-      `<span style="font-size:11px;color:#555">座標系: ${data.projection}</span>`;
+      `<strong>${escapeHtml(String(data.featureCount))} 地物</strong> (${escapeHtml(data.fileSize)})<br>` +
+      `<span style="font-size:11px">${escapeHtml(layers)}</span><br>` +
+      `<span style="font-size:11px;color:#555">座標系: ${escapeHtml(data.projection)}</span>`;
 
     btnDownload.href = data.downloadUrl;
     const customName = filenameInput.value.trim();
@@ -627,17 +641,40 @@ btnGenerate.addEventListener('click', () => {
     btnGenerate.disabled = false;
   });
 
+  // サーバー送信の error イベント (event: error)
   evtSource.addEventListener('error', (e) => {
-    evtSource.close();
-    try {
-      const data = JSON.parse(e.data);
-      showError(data.message);
-    } catch {
-      showError('通信エラーが発生しました');
+    // サーバーからの明示的エラー (e.data がある場合)
+    if (e.data) {
+      evtSource.close();
+      activeEvtSource = null;
+      try {
+        const data = JSON.parse(e.data);
+        showError(data.message);
+      } catch {
+        showError('サーバーエラーが発生しました');
+      }
+      progressArea.classList.remove('active');
+      btnGenerate.disabled = false;
     }
-    progressArea.classList.remove('active');
-    btnGenerate.disabled = false;
   });
+
+  // 接続エラー (EventSource 標準の onerror)
+  evtSource.onerror = () => {
+    if (evtSource.readyState === EventSource.CLOSED) {
+      activeEvtSource = null;
+      showError('サーバーとの接続が切断されました');
+      progressArea.classList.remove('active');
+      btnGenerate.disabled = false;
+    }
+  };
+});
+
+// ページ離脱時にSSE接続を閉じる
+window.addEventListener('beforeunload', () => {
+  if (activeEvtSource) {
+    activeEvtSource.close();
+    activeEvtSource = null;
+  }
 });
 
 // ─── エラー表示 ───

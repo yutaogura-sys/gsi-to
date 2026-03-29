@@ -1,5 +1,5 @@
 /**
- * DXF R12 (AC1009) Writer - ASCII-only, maximum compatibility
+ * DXF 2000 (AC1015) Writer - Unicode (Japanese) support via MTEXT
  */
 
 function w(code, val) {
@@ -8,6 +8,35 @@ function w(code, val) {
 
 function ff(n) {
   return Number(n).toFixed(6);
+}
+
+/** Handle counter for unique DXF handles (hex) */
+let _handleCounter = 0;
+function nextHandle() {
+  _handleCounter++;
+  return _handleCounter.toString(16).toUpperCase();
+}
+
+function resetHandles() {
+  _handleCounter = 0;
+}
+
+/**
+ * Encode a Unicode string for DXF MTEXT.
+ * Non-ASCII characters are encoded as \\U+XXXX sequences.
+ */
+function encodeDxfUnicode(text) {
+  let result = '';
+  for (const ch of text) {
+    const code = ch.codePointAt(0);
+    if (code >= 0x20 && code <= 0x7E) {
+      result += ch;
+    } else if (code > 0x7E) {
+      result += '\\U+' + code.toString(16).toUpperCase().padStart(4, '0');
+    }
+    // Control chars below 0x20 are dropped (except handled by \\P for newline)
+  }
+  return result;
 }
 
 export class DxfWriter {
@@ -54,19 +83,20 @@ export class DxfWriter {
 
   addMText(layer, x, y, height, text) {
     this._upd(x, y);
-    // Strip non-ASCII for R12 compatibility
-    const safe = text.replace(/[^\x20-\x7E]/g, '?');
-    this.entities.push({ type: 'TX', layer, x, y, height, text: safe });
+    const encoded = encodeDxfUnicode(text);
+    this.entities.push({ type: 'MT', layer, x, y, height, text: encoded });
     return this;
   }
 
   toString() {
+    resetHandles();
     let s = '';
 
     // === HEADER ===
     s += w(0, 'SECTION');
     s += w(2, 'HEADER');
-    s += w(9, '$ACADVER');  s += w(1, 'AC1009');
+    s += w(9, '$ACADVER');  s += w(1, 'AC1015');
+    s += w(9, '$DWGCODEPAGE'); s += w(3, 'ANSI_932');
     s += w(9, '$MEASUREMENT'); s += w(70, '1');
     s += w(9, '$PDMODE');   s += w(70, '3');
     s += w(9, '$PDSIZE');   s += w(40, '2.0');
@@ -104,8 +134,10 @@ export class DxfWriter {
     // LTYPE
     s += w(0, 'TABLE');
     s += w(2, 'LTYPE');
+    s += w(5, nextHandle());
     s += w(70, '1');
     s += w(0, 'LTYPE');
+    s += w(5, nextHandle());
     s += w(2, 'CONTINUOUS');
     s += w(70, '0');
     s += w(3, 'Solid line');
@@ -114,17 +146,38 @@ export class DxfWriter {
     s += w(40, '0.0');
     s += w(0, 'ENDTAB');
 
+    // STYLE table (needed for MTEXT with Unicode)
+    s += w(0, 'TABLE');
+    s += w(2, 'STYLE');
+    s += w(5, nextHandle());
+    s += w(70, '1');
+    s += w(0, 'STYLE');
+    s += w(5, nextHandle());
+    s += w(2, 'Standard');
+    s += w(70, '0');
+    s += w(40, '0.0');
+    s += w(41, '1.0');
+    s += w(50, '0.0');
+    s += w(71, '0');
+    s += w(42, '2.5');
+    s += w(3, 'txt');
+    s += w(4, '');
+    s += w(0, 'ENDTAB');
+
     // LAYER
     s += w(0, 'TABLE');
     s += w(2, 'LAYER');
+    s += w(5, nextHandle());
     s += w(70, String(this.layers.size + 1));
     s += w(0, 'LAYER');
+    s += w(5, nextHandle());
     s += w(2, '0');
     s += w(70, '0');
     s += w(62, '7');
     s += w(6, 'CONTINUOUS');
     for (const [name, { color }] of this.layers) {
       s += w(0, 'LAYER');
+      s += w(5, nextHandle());
       s += w(2, name);
       s += w(70, '0');
       s += w(62, String(color));
@@ -146,21 +199,25 @@ export class DxfWriter {
       switch (e.type) {
         case 'PL': {
           s += w(0, 'POLYLINE');
+          s += w(5, nextHandle());
           s += w(8, e.layer);
           s += w(66, '1');
           s += w(70, e.closed ? '1' : '0');
           for (const [x, y] of e.points) {
             s += w(0, 'VERTEX');
+            s += w(5, nextHandle());
             s += w(8, e.layer);
             s += w(10, ff(x));
             s += w(20, ff(y));
           }
           s += w(0, 'SEQEND');
+          s += w(5, nextHandle());
           s += w(8, e.layer);
           break;
         }
         case 'PT': {
           s += w(0, 'POINT');
+          s += w(5, nextHandle());
           s += w(8, e.layer);
           s += w(10, ff(e.x));
           s += w(20, ff(e.y));
@@ -169,6 +226,7 @@ export class DxfWriter {
         }
         case 'LN': {
           s += w(0, 'LINE');
+          s += w(5, nextHandle());
           s += w(8, e.layer);
           s += w(10, ff(e.x1));
           s += w(20, ff(e.y1));
@@ -178,14 +236,18 @@ export class DxfWriter {
           s += w(31, '0.0');
           break;
         }
-        case 'TX': {
-          s += w(0, 'TEXT');
+        case 'MT': {
+          s += w(0, 'MTEXT');
+          s += w(5, nextHandle());
           s += w(8, e.layer);
           s += w(10, ff(e.x));
           s += w(20, ff(e.y));
           s += w(30, '0.0');
           s += w(40, ff(e.height));
+          s += w(71, '1');       // Attachment point: top-left
+          s += w(72, '1');       // Drawing direction: left-to-right
           s += w(1, e.text);
+          s += w(7, 'Standard');
           break;
         }
       }

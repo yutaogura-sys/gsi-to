@@ -5,10 +5,9 @@
 
 import Protobuf from 'pbf';
 import { VectorTile } from '@mapbox/vector-tile';
-import { getLayerConfig } from './layer-config.js';
-
 const GSI_TILE_BASE = 'https://cyberjapandata.gsi.go.jp/xyz/experimental_bvmap';
 const REQUEST_DELAY_MS = 100;
+const MAX_TILES = 200;
 
 /**
  * 緯度経度 → タイル座標
@@ -59,7 +58,7 @@ async function fetchTile(zoom, x, y) {
   const url = `${GSI_TILE_BASE}/${zoom}/${x}/${y}.pbf`;
 
   try {
-    const response = await fetch(url);
+    const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
     if (response.status === 404) return null;
     if (!response.ok) return null;
 
@@ -117,6 +116,13 @@ function extractFeatures(vt, tx, ty, zoom) {
  */
 export async function fetchAllFeatures(centerLat, centerLon, zoom, radiusM, onProgress) {
   const tiles = getTileGrid(centerLat, centerLon, zoom, radiusM);
+
+  if (tiles.length > MAX_TILES) {
+    throw new Error(
+      `タイル数が上限を超えています (${tiles.length}タイル / 上限${MAX_TILES})。半径を小さくするかズームレベルを下げてください`
+    );
+  }
+
   const allFeatures = [];
   let fetchedCount = 0;
 
