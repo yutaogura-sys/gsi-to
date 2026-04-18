@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 
 import { geocode } from './geocoder.js';
 import { fetchAllFeatures } from './tile-fetcher.js';
@@ -278,7 +279,7 @@ const server = http.createServer(async (req, res) => {
       if (clientDisconnected) { return; }
 
       // DXF を一時ストレージに保存
-      const id = crypto.randomUUID();
+      const id = randomUUID();
       storeDxf(id, {
         dxfString: result.dxfString,
         fileName: name ? `${name}.dxf` : 'output.dxf',

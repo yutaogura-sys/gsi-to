@@ -124,7 +124,6 @@ export async function fetchAllFeatures(centerLat, centerLon, zoom, radiusM, onPr
   }
 
   const allFeatures = [];
-  let fetchedCount = 0;
 
   for (let i = 0; i < tiles.length; i++) {
     const { x, y } = tiles[i];
@@ -133,7 +132,6 @@ export async function fetchAllFeatures(centerLat, centerLon, zoom, radiusM, onPr
     if (vt) {
       const features = extractFeatures(vt, x, y, zoom);
       allFeatures.push(...features);
-      fetchedCount++;
 
       if (onProgress) {
         onProgress(i + 1, tiles.length, {

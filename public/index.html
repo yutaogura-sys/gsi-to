@@ -517,10 +517,17 @@ async function searchAddress() {
   const q = addressInput.value.trim();
   if (!q) return;
 
+  hideError();
+
   // GoogleマップURL判定
   if (isGoogleMapsUrl(q)) {
     const coords = parseGoogleMapsUrl(q);
     if (coords && isFinite(coords.lat) && isFinite(coords.lon)) {
+      // 日本の範囲チェック (サーバー検証と同じ)
+      if (coords.lat < 20 || coords.lat > 46 || coords.lon < 122 || coords.lon > 154) {
+        showError('GoogleマップURLの座標が日本の範囲外です');
+        return;
+      }
       setLocation(coords.lat, coords.lon, `Google Maps (${coords.lat.toFixed(4)}, ${coords.lon.toFixed(4)})`);
       return;
     } else {
@@ -531,7 +538,6 @@ async function searchAddress() {
 
   btnSearch.textContent = '検索中...';
   btnSearch.disabled = true;
-  hideError();
 
   try {
     const res = await fetch(`/api/geocode?q=${encodeURIComponent(q)}`);

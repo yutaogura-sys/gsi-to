@@ -201,6 +201,14 @@ async function main() {
     console.error('エラー: ズームレベルは 4～16 の範囲で指定してください');
     process.exit(1);
   }
+  if (!Number.isFinite(args.radius) || args.radius < 50 || args.radius > 5000) {
+    console.error('エラー: 半径は 50～5000m の範囲で指定してください');
+    process.exit(1);
+  }
+  if (lat < 20 || lat > 46 || lon < 122 || lon > 154) {
+    console.error('エラー: 緯度・経度が日本の範囲外です (lat:20-46, lon:122-154)');
+    process.exit(1);
+  }
 
   // 座標系の設定
   const zone = args.zone || detectZone(lat, lon);
