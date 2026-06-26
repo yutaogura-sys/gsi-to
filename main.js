@@ -25,10 +25,8 @@
 
 import { writeFileSync } from 'node:fs';
 import { geocode } from './geocoder.js';
-import { fetchAllFeatures } from './tile-fetcher.js';
 import { CoordinateConverter, detectZone } from './projection.js';
-import { getLayerConfig } from './layer-config.js';
-import { DxfWriter } from './dxf-writer.js';
+import { buildDxf } from './dxf-builder.js';
 
 // ─── 引数パーサー ───
 
@@ -106,60 +104,6 @@ function printHelp() {
 `);
 }
 
-// ─── GeoJSON ジオメトリを DXF エンティティに変換 ───
-
-function addGeometryToDxf(dxf, layerName, geometry, converter) {
-  const { type, coordinates } = geometry;
-
-  switch (type) {
-    case 'Point': {
-      const [x, y] = converter.convert(coordinates[0], coordinates[1]);
-      dxf.addPoint(layerName, x, y);
-      break;
-    }
-
-    case 'MultiPoint': {
-      for (const coord of coordinates) {
-        const [x, y] = converter.convert(coord[0], coord[1]);
-        dxf.addPoint(layerName, x, y);
-      }
-      break;
-    }
-
-    case 'LineString': {
-      const pts = coordinates.map((c) => converter.convert(c[0], c[1]));
-      dxf.addLwPolyline(layerName, pts, false);
-      break;
-    }
-
-    case 'MultiLineString': {
-      for (const line of coordinates) {
-        const pts = line.map((c) => converter.convert(c[0], c[1]));
-        dxf.addLwPolyline(layerName, pts, false);
-      }
-      break;
-    }
-
-    case 'Polygon': {
-      for (const ring of coordinates) {
-        const pts = ring.map((c) => converter.convert(c[0], c[1]));
-        dxf.addLwPolyline(layerName, pts, true);
-      }
-      break;
-    }
-
-    case 'MultiPolygon': {
-      for (const polygon of coordinates) {
-        for (const ring of polygon) {
-          const pts = ring.map((c) => converter.convert(c[0], c[1]));
-          dxf.addLwPolyline(layerName, pts, true);
-        }
-      }
-      break;
-    }
-  }
-}
-
 // ─── メイン処理 ───
 
 async function main() {
@@ -216,127 +160,58 @@ async function main() {
   console.log(`座標系: ${converter.describe()}`);
   console.log(`取得範囲: 半径 ${args.radius}m / ズーム ${args.zoom}`);
 
-  // ベクトルタイルの取得
+  // ベクトルタイルの取得 → DXF 生成 (共有モジュール buildDxf)
   console.log('\nベクトルタイルを取得中...');
-  const features = await fetchAllFeatures(
-    lat, lon, args.zoom, args.radius,
-    (current, total, info) => {
-      if (info.featureCount > 0) {
-        process.stdout.write(
-          `  [${current}/${total}] タイル(${info.x},${info.y}) `
-          + `${info.layerCount}レイヤー / ${info.featureCount}地物\n`
-        );
-      } else {
-        process.stdout.write(
-          `  [${current}/${total}] タイル(${info.x},${info.y}) データなし\n`
-        );
-      }
+  let result;
+  try {
+    result = await buildDxf({
+      lat,
+      lon,
+      radius: args.radius,
+      zoom: args.zoom,
+      locationName,
+      mode: 'full',
+      zone,
+      onTile: (current, total, info) => {
+        if (info.featureCount > 0) {
+          process.stdout.write(
+            `  [${current}/${total}] タイル(${info.x},${info.y}) `
+            + `${info.layerCount}レイヤー / ${info.featureCount}地物\n`
+          );
+        } else {
+          process.stdout.write(
+            `  [${current}/${total}] タイル(${info.x},${info.y}) データなし\n`
+          );
+        }
+      },
+    });
+  } catch (err) {
+    console.error(`\nエラー: ${err.message}`);
+    if (err.message.includes('ベクトルタイルデータがありません')) {
+      console.error('ヒント: ズームレベルを下げるか、範囲を広げてみてください');
     }
-  );
-
-  if (features.length === 0) {
-    console.error('\nエラー: この範囲にベクトルタイルデータがありません');
-    console.error('ヒント: ズームレベルを下げるか、範囲を広げてみてください');
     process.exit(1);
   }
 
-  console.log(`\n合計 ${features.length} 地物を取得`);
-
-  // DXF 生成
+  console.log(`\n合計 ${result.rawFeatureCount} 地物を取得`);
   console.log('DXF ファイルを生成中...');
-  const dxf = new DxfWriter();
-
-  // 指定座標の変換結果をオフセット基準にする（原点付近に移動）
-  const [originX, originY] = converter.convert(lon, lat);
-  const convertWithOffset = (lonVal, latVal) => {
-    const [x, y] = converter.convert(lonVal, latVal);
-    return [x - originX, y - originY];
-  };
-
-  // レイヤー集計
-  const layerStats = {};
-  let addedCount = 0;
-
-  for (const feat of features) {
-    const config = getLayerConfig(feat.layerName, 'full');
-    if (!config) continue;
-    const dxfLayerName = config.dxf;
-
-    // レイヤーを登録
-    dxf.addLayer(dxfLayerName, config.color);
-
-    // ジオメトリを DXF に追加 (オフセット付き)
-    addGeometryToDxf(dxf, dxfLayerName, feat.geojson.geometry, { convert: convertWithOffset });
-    addedCount++;
-
-    // ラベル (注記) の場合はテキストも追加
-    if (feat.layerName === 'label' && feat.properties.knj) {
-      const coords = feat.geojson.geometry.coordinates;
-      if (coords?.length >= 2) {
-        const [tx, ty] = convertWithOffset(coords[0], coords[1]);
-        dxf.addLayer('LABEL_TEXT', 7);
-        dxf.addMText('LABEL_TEXT', tx, ty, 3.0, feat.properties.knj);
-      }
-    }
-
-    // 標高点の場合は標高値をテキスト表示
-    if (feat.layerName === 'elevation' && feat.properties.alti != null) {
-      const coords = feat.geojson.geometry.coordinates;
-      if (coords?.length >= 2) {
-        const [tx, ty] = convertWithOffset(coords[0], coords[1]);
-        dxf.addLayer('ELEV_TEXT', 3);
-        dxf.addMText('ELEV_TEXT', tx + 2, ty, 2.0, String(feat.properties.alti));
-      }
-    }
-
-    // 等高線の場合は標高値をプロパティから取得して表示
-    if (feat.layerName === 'contour' && feat.properties.alti != null) {
-      const coords = feat.geojson.geometry.coordinates;
-      const firstCoord = Array.isArray(coords[0]?.[0]) ? coords[0][0] : coords[0];
-      if (firstCoord?.length >= 2) {
-        const [tx, ty] = convertWithOffset(firstCoord[0], firstCoord[1]);
-        dxf.addLayer('CONTOUR_TEXT', 24);
-        dxf.addMText('CONTOUR_TEXT', tx, ty, 1.5, String(feat.properties.alti));
-      }
-    }
-
-    // 統計
-    layerStats[dxfLayerName] = (layerStats[dxfLayerName] || 0) + 1;
-  }
-
-  if (addedCount === 0) {
-    console.error('\nエラー: この範囲に対象の地物データがありません');
-    process.exit(1);
-  }
-
-  // 中心点にクロスマーカー (原点 = 指定座標)
-  dxf.addLayer('CENTER', 1);
-  dxf.addLine('CENTER', -10, 0, 10, 0);
-  dxf.addLine('CENTER', 0, -10, 0, 10);
-
-  // メタ情報テキストを追加
-  dxf.addLayer('INFO', 8);
-  dxf.addMText('INFO', 0, -15, 2.0,
-    `Location: ${locationName}\\P${converter.describe()}\\P1unit=1m\\PGSI Vector Tile`
-  );
 
   // ファイル書き出し
   const outputFile = args.output || 'output.dxf';
-  const dxfString = dxf.toString();
-  writeFileSync(outputFile, dxfString, 'utf-8');
+  writeFileSync(outputFile, result.dxfString, 'utf-8');
 
   // 結果表示
-  const fileSizeKB = (Buffer.byteLength(dxfString, 'utf-8') / 1024).toFixed(1);
+  const fileSizeKB = (Buffer.byteLength(result.dxfString, 'utf-8') / 1024).toFixed(1);
   console.log(`\n✓ DXF ファイルを保存しました: ${outputFile} (${fileSizeKB} KB)`);
   console.log('\nレイヤー別地物数:');
 
-  const sortedLayers = Object.entries(layerStats).sort((a, b) => b[1] - a[1]);
+  const sortedLayers = Object.entries(result.stats).sort((a, b) => b[1] - a[1]);
   for (const [name, count] of sortedLayers) {
     console.log(`  ${name.padEnd(16)} ${count}`);
   }
-  console.log(`  ${'合計'.padEnd(16)} ${addedCount}`);
+  console.log(`  ${'合計'.padEnd(16)} ${result.featureCount}`);
   console.log(`\n縮尺: 1/1 (1 DXF 単位 = 1 メートル)`);
-  console.log(`座標系: ${converter.describe()}`);
+  console.log(`座標系: ${result.projection}`);
 }
 
 main().catch((err) => {
